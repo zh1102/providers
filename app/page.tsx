@@ -2,7 +2,24 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type StageId = "idea" | "story" | "visual" | "plan" | "storyboard";
+type StageId = "story" | "portrait" | "visual" | "storyboard";
+type TextProvider = "openai" | "deepseek" | "zhipu";
+
+const providerModels: Record<TextProvider, Array<{ value: string; label: string }>> = {
+  openai: [
+    { value: "gpt-5.6-terra", label: "GPT-5.6 Terra · 均衡" },
+    { value: "gpt-5.6", label: "GPT-5.6 · 质量" },
+    { value: "gpt-5.6-luna", label: "GPT-5.6 Luna · 速度" },
+  ],
+  deepseek: [
+    { value: "deepseek-flash", label: "DeepSeek Flash" },
+    { value: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+  ],
+  zhipu: [
+    { value: "glm-4.5-flash", label: "GLM-4.5 Flash" },
+    { value: "glm-4.5", label: "GLM-4.5" },
+  ],
+};
 
 type ProjectState = {
   name: string;
@@ -14,54 +31,11 @@ type ProjectState = {
   outputs: Partial<Record<StageId, string>>;
 };
 
-const stages: Array<{
-  id: StageId;
-  number: string;
-  eyebrow: string;
-  title: string;
-  description: string;
-  button: string;
-}> = [
-  {
-    id: "idea",
-    number: "01",
-    eyebrow: "从一句话开始",
-    title: "灵感破题",
-    description: "把零散想法整理成高概念、核心戏剧动作和明确的故事方向。",
-    button: "生成故事方向",
-  },
-  {
-    id: "story",
-    number: "02",
-    eyebrow: "建立故事世界",
-    title: "故事创作",
-    description: "完成人物、世界观、结构大纲和可拍摄的中文分场故事。",
-    button: "生成完整故事",
-  },
-  {
-    id: "visual",
-    number: "03",
-    eyebrow: "把文字变成画面",
-    title: "视觉提示词",
-    description: "统一角色长相、真人质感、情绪表演、场景与关键帧图片提示词。",
-    button: "生成视觉方案",
-  },
-  {
-    id: "plan",
-    number: "04",
-    eyebrow: "开拍前的确认",
-    title: "分镜确认",
-    description: "核对资产、人物位置、视觉风格和每段不超过15秒的时间划分。",
-    button: "生成分镜方案",
-  },
-  {
-    id: "storyboard",
-    number: "05",
-    eyebrow: "交付生产指令",
-    title: "最终分镜",
-    description: "输出镜头表、表演、构图、机位、声音与可复制的视频提示词。",
-    button: "生成最终分镜",
-  },
+const stages: Array<{ id: StageId; number: string; eyebrow: string; title: string; description: string; button: string }> = [
+  { id: "story", number: "01", eyebrow: "从灵感到完整剧本", title: "故事创作", description: "完成破题、人物、世界观、结构、分场、剧本、自检与评分。", button: "生成01故事草稿" },
+  { id: "portrait", number: "02", eyebrow: "锁定人物身份", title: "真人感人像提示词", description: "为主要人物建立统一身份、脸部、服装、光线和真人摄影基准。", button: "生成02真人提示词" },
+  { id: "visual", number: "03", eyebrow: "把剧本变成静帧", title: "静态图像提示词", description: "输出场景、道具、人物和关键帧的中英双语七段式提示词。", button: "生成03静态提示词" },
+  { id: "storyboard", number: "04", eyebrow: "分镜与人物情绪", title: "最终分镜", description: "确认资产与时间划分，输出逐镜动作、构图、机位、表情和音效。", button: "生成04最终分镜" },
 ];
 
 const emptyProject: ProjectState = {
@@ -100,9 +74,15 @@ function downloadProject(project: ProjectState) {
 
 export default function Home() {
   const [project, setProject] = useState<ProjectState>(emptyProject);
-  const [activeStage, setActiveStage] = useState<StageId>("idea");
+  const [activeStage, setActiveStage] = useState<StageId>("story");
+  const [provider, setProvider] = useState<TextProvider>("deepseek");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("gpt-5.6-terra");
+  const [model, setModel] = useState("deepseek-flash");
+  const [seedanceKey, setSeedanceKey] = useState("");
+  const [seedanceModel, setSeedanceModel] = useState("");
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoTask, setVideoTask] = useState<{ id?: string; status?: string; videoUrl?: string }>({});
+  const [videoLoading, setVideoLoading] = useState(false);
   const [rememberKey, setRememberKey] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [revision, setRevision] = useState("");
@@ -111,21 +91,27 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    try {
-      const storedProject = localStorage.getItem("captain-ai-project");
-      const storedModel = localStorage.getItem("captain-ai-model");
-      const storedKey = localStorage.getItem("captain-ai-api-key");
-      if (storedProject) setProject(JSON.parse(storedProject));
-      if (storedModel) setModel(storedModel);
-      if (storedKey) {
-        setApiKey(storedKey);
-        setRememberKey(true);
+    // 延迟到当前 effect 之后恢复本地草稿，避免同步连锁渲染。
+    queueMicrotask(() => {
+      try {
+        const storedProject = localStorage.getItem("captain-ai-project");
+        const storedModel = localStorage.getItem("captain-ai-model");
+        const storedProvider = localStorage.getItem("captain-ai-provider") as TextProvider | null;
+        const selectedProvider = storedProvider && storedProvider in providerModels ? storedProvider : "deepseek";
+        const storedKey = localStorage.getItem(`captain-ai-api-key-${selectedProvider}`);
+        if (storedProject) setProject(JSON.parse(storedProject));
+        if (storedProvider && storedProvider in providerModels) setProvider(storedProvider);
+        if (storedModel) setModel(storedModel);
+        if (storedKey) {
+          setApiKey(storedKey);
+          setRememberKey(true);
+        }
+      } catch {
+        // 损坏的本地草稿不能阻塞工作台启动。
+      } finally {
+        setHydrated(true);
       }
-    } catch {
-      // A damaged local draft should never block the workspace.
-    } finally {
-      setHydrated(true);
-    }
+    });
   }, []);
 
   useEffect(() => {
@@ -159,11 +145,12 @@ export default function Home() {
   }
 
   function saveSettings() {
+    localStorage.setItem("captain-ai-provider", provider);
     localStorage.setItem("captain-ai-model", model);
     if (rememberKey) {
-      localStorage.setItem("captain-ai-api-key", apiKey);
+      localStorage.setItem(`captain-ai-api-key-${provider}`, apiKey);
     } else {
-      localStorage.removeItem("captain-ai-api-key");
+      localStorage.removeItem(`captain-ai-api-key-${provider}`);
     }
     setSettingsOpen(false);
     setError("");
@@ -172,7 +159,7 @@ export default function Home() {
   function resetProject() {
     if (!window.confirm("新建项目会清空当前本地草稿，是否继续？")) return;
     setProject(emptyProject);
-    setActiveStage("idea");
+    setActiveStage("story");
     setRevision("");
     setError("");
   }
@@ -181,7 +168,7 @@ export default function Home() {
     setError("");
     if (!apiKey.trim()) {
       setSettingsOpen(true);
-      setError("请先填写你自己的 OpenAI API Key。");
+      setError("请先填写所选文本服务商的 API Key。");
       return;
     }
     if (!project.idea.trim()) {
@@ -196,6 +183,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey: apiKey.trim(),
+          provider,
           model: model.trim(),
           stage: activeStage,
           project: {
@@ -238,10 +226,48 @@ export default function Home() {
     }
   }
 
+  async function createVideoTask() {
+    setError("");
+    if (!seedanceKey.trim() || !seedanceModel.trim() || !videoPrompt.trim()) {
+      setError("请填写火山方舟 Key、Seedance 模型接入点和一条视频提示词。");
+      return;
+    }
+    setVideoLoading(true);
+    try {
+      const response = await fetch("/api/video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: seedanceKey.trim(), model: seedanceModel.trim(), prompt: videoPrompt.trim(), ratio: project.ratio.startsWith("9:16") ? "9:16" : project.ratio.startsWith("1:1") ? "1:1" : "16:9", duration: 5 }),
+      });
+      const data = (await response.json()) as { id?: string; status?: string; error?: string };
+      if (!response.ok || !data.id) throw new Error(data.error || "Seedance 任务创建失败。");
+      setVideoTask({ id: data.id, status: data.status ?? "queued" });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Seedance 任务创建失败。");
+    } finally {
+      setVideoLoading(false);
+    }
+  }
+
+  async function refreshVideoTask() {
+    if (!videoTask.id || !seedanceKey.trim()) return;
+    setVideoLoading(true);
+    try {
+      const response = await fetch(`/api/video?taskId=${encodeURIComponent(videoTask.id)}`, { headers: { "x-ark-api-key": seedanceKey.trim() } });
+      const data = (await response.json()) as { status?: string; content?: { video_url?: string }; error?: { message?: string } | string };
+      if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : data.error?.message || "查询失败。");
+      setVideoTask({ id: videoTask.id, status: data.status, videoUrl: data.content?.video_url });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Seedance 状态查询失败。");
+    } finally {
+      setVideoLoading(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand" onClick={() => setActiveStage("idea")}>
+        <button className="brand" onClick={() => setActiveStage("story")}>
           <span className="brand-mark">船</span>
           <span>
             <strong>船长AI视界</strong>
@@ -292,15 +318,19 @@ export default function Home() {
             {stages.map((stage, index) => {
               const isActive = stage.id === activeStage;
               const isDone = Boolean(project.outputs[stage.id]);
+              // 只有此前阶段均已产出并确认，才能进入后续阶段。
+              const isLocked = stages.slice(0, index).some((previous) => !project.outputs[previous.id]);
               return (
                 <button
                   key={stage.id}
                   className={`${isActive ? "active" : ""} ${isDone ? "done" : ""}`}
                   onClick={() => {
+                    if (isLocked) return;
                     setActiveStage(stage.id);
                     setRevision("");
                     setError("");
                   }}
+                  disabled={isLocked}
                 >
                   <span className="stage-index">{isDone ? "✓" : stage.number}</span>
                   <span>
@@ -337,7 +367,7 @@ export default function Home() {
             </div>
           </div>
 
-          {activeStage === "idea" && (
+          {activeStage === "story" && (
             <section className="brief-card">
               <div className="card-heading">
                 <div>
@@ -411,14 +441,14 @@ export default function Home() {
             </section>
           )}
 
-          {activeStage !== "idea" && (
+          {activeStage !== "story" && (
             <section className="context-strip">
               <div>
                 <span>创作依据</span>
                 <strong>{project.name}</strong>
               </div>
               <p>{project.idea}</p>
-              <button onClick={() => setActiveStage("idea")}>修改基础设定</button>
+              <button onClick={() => setActiveStage("story")}>修改基础设定</button>
             </section>
           )}
 
@@ -498,6 +528,22 @@ export default function Home() {
               </div>
             </div>
           </section>
+
+          {activeStage === "storyboard" && currentOutput && (
+            <section className="action-card video-card">
+              <label htmlFor="video-prompt">Seedance 单条视频生成</label>
+              <p>从04结果中复制一条不超过15秒的视频提示词。任务由你的火山方舟账号计费。</p>
+              <textarea id="video-prompt" value={videoPrompt} onChange={(event) => setVideoPrompt(event.target.value)} placeholder="粘贴一条 Seedance 视频提示词……" />
+              <div className="action-row">
+                <p>{videoTask.id ? `任务：${videoTask.id} · ${videoTask.status ?? "未知"}` : "尚未创建视频任务"}</p>
+                <div>
+                  <button className="generate-button" onClick={createVideoTask} disabled={videoLoading}>{videoLoading ? "处理中" : "创建视频任务"}</button>
+                  {videoTask.id && <button className="continue-button" onClick={refreshVideoTask} disabled={videoLoading}>查询状态</button>}
+                </div>
+              </div>
+              {videoTask.videoUrl && <a className="key-help" href={videoTask.videoUrl} target="_blank" rel="noreferrer">打开生成视频 ↗</a>}
+            </section>
+          )}
         </section>
       </div>
 
@@ -534,27 +580,46 @@ export default function Home() {
               ×
             </button>
             <span className="modal-kicker">AI CONNECTION</span>
-            <h2 id="settings-title">连接你自己的 OpenAI API</h2>
+            <h2 id="settings-title">连接你自己的 AI 服务</h2>
             <p className="modal-intro">
-              每位使用者填写自己的 Key，费用由各自的 OpenAI API 账户结算。本站不提供共享 Key。
+              文本生成支持 OpenAI、DeepSeek 和智谱 GLM；视频生成使用火山方舟 Seedance。费用由各自账户结算。
             </p>
             <label>
-              OpenAI API Key
+              文本服务商
+              <select value={provider} onChange={(event) => {
+                const next = event.target.value as TextProvider;
+                setProvider(next);
+                setModel(providerModels[next][0].value);
+                setApiKey(localStorage.getItem(`captain-ai-api-key-${next}`) ?? "");
+              }}>
+                <option value="deepseek">DeepSeek</option>
+                <option value="zhipu">智谱 GLM</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </label>
+            <label>
+              {provider === "openai" ? "OpenAI" : provider === "deepseek" ? "DeepSeek" : "智谱 GLM"} API Key
               <input
                 type="password"
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
-                placeholder="sk-..."
+                placeholder="填写所选服务商的 API Key"
                 autoComplete="off"
               />
             </label>
             <label>
               使用模型
               <select value={model} onChange={(event) => setModel(event.target.value)}>
-                <option value="gpt-5.6-terra">GPT-5.6 Terra · 均衡推荐</option>
-                <option value="gpt-5.6">GPT-5.6 · 质量优先</option>
-                <option value="gpt-5.6-luna">GPT-5.6 Luna · 速度优先</option>
+                {providerModels[provider].map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
+            </label>
+            <label>
+              火山方舟 API Key（仅视频生成）
+              <input type="password" value={seedanceKey} onChange={(event) => setSeedanceKey(event.target.value)} placeholder="填写 Ark API Key" autoComplete="off" />
+            </label>
+            <label>
+              Seedance 模型接入点 ID
+              <input value={seedanceModel} onChange={(event) => setSeedanceModel(event.target.value)} placeholder="在方舟控制台复制接入点 ID" />
             </label>
             <label className="remember-row">
               <input
@@ -570,16 +635,16 @@ export default function Home() {
             <div className="security-box">
               <strong>Key 如何使用？</strong>
               <p>
-                Key 只在你点击生成时发送给本站的安全转发接口，再交给 OpenAI；接口不会记录或写入数据库。
+                Key 只在点击生成时发送到本站转发接口，再交给所选官方服务；接口不会写入数据库。火山方舟 Key 默认不持久保存。
               </p>
             </div>
             <a
-              href="https://platform.openai.com/api-keys"
+              href={provider === "deepseek" ? "https://platform.deepseek.com/api_keys" : provider === "zhipu" ? "https://open.bigmodel.cn/usercenter/apikeys" : "https://platform.openai.com/api-keys"}
               target="_blank"
               rel="noreferrer"
               className="key-help"
             >
-              我还没有 API Key，去 OpenAI 创建
+              前往所选服务商创建 API Key
               <span>↗</span>
             </a>
             <button className="save-settings" onClick={saveSettings}>

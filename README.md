@@ -34,15 +34,20 @@ GitHub 仓库名：`chuanzhangAIshijie`
 
 ## 创作流程
 
-1. 灵感破题
-2. 故事创作
-3. 人物与图片提示词（自动融合真人感和人物情绪）
-4. 真人感与角色情绪
-5. 最终分镜
+1. 01 故事创作
+2. 02 真人感人像提示词
+3. 03 静态图像提示词
+4. 04 最终分镜与人物情绪
 
-网站采用 BYOK（自带 API Key）方式。每位使用者填写自己的 OpenAI API Key，密钥只用于向 OpenAI 发起当次请求；项目内容保存在使用者自己的浏览器中。
+后一步只有在前一步已经生成并确认后才能进入。04阶段结果可复制单条 Seedance 视频提示词并提交到火山方舟。
 
-> ChatGPT Plus 与 OpenAI API 是两套独立服务。使用网站调用 API 时，需要在 OpenAI API 平台单独开通计费和额度。
+### 支持的模型服务
+
+- OpenAI Responses API
+- DeepSeek Chat Completions API
+- 智谱 GLM Chat Completions API
+- 火山方舟 Seedance 异步视频生成 API
+
 
 ## 仓库中的技能
 
